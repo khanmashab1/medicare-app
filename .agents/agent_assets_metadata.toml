@@ -1,0 +1,8 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "8kFXrtSP7QpQJJBePvjxG"
+uri = "file://artifacts/medicare/assets/images/icon.png"
+type = "image"
+title = "medicare app icon"

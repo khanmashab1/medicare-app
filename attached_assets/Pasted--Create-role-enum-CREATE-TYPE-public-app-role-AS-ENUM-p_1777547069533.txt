@@ -1,0 +1,575 @@
+-- Create role enum
+CREATE TYPE public.app_role AS ENUM ('patient', 'doctor', 'pa', 'admin');
+
+-- Create profiles table
+CREATE TABLE public.profiles (
+  id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  role app_role NOT NULL DEFAULT 'patient',
+  status TEXT NOT NULL DEFAULT 'Active' CHECK (status IN ('Active', 'Inactive', 'Deleted')),
+  name TEXT,
+  phone TEXT,
+  age INT,
+  gender TEXT,
+  blood_type TEXT,
+  province TEXT,
+  city TEXT,
+  avatar_path TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create user_roles table for proper role management
+CREATE TABLE public.user_roles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  role app_role NOT NULL,
+  UNIQUE (user_id, role)
+);
+
+-- Create doctors table
+CREATE TABLE public.doctors (
+  user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
+  specialty TEXT NOT NULL,
+  rating NUMERIC(3,1) DEFAULT 4.0,
+  experience_years INT DEFAULT 0,
+  fee NUMERIC(10,2) NOT NULL DEFAULT 500,
+  easypaisa_number TEXT,
+  image_path TEXT,
+  max_patients_per_day INT NOT NULL DEFAULT 30,
+  province TEXT,
+  city TEXT,
+  bio TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create pa_assignments table
+CREATE TABLE public.pa_assignments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  pa_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  doctor_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (pa_user_id, doctor_user_id)
+);
+
+-- Create appointments table
+CREATE TABLE public.appointments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  doctor_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  appointment_date DATE NOT NULL,
+  token_number INT NOT NULL,
+  department TEXT,
+  reason TEXT,
+  status TEXT NOT NULL DEFAULT 'Upcoming' CHECK (status IN ('Pending', 'Upcoming', 'Completed', 'Cancelled')),
+  payment_method TEXT NOT NULL DEFAULT 'Cash' CHECK (payment_method IN ('Cash', 'Online')),
+  payment_status TEXT NOT NULL DEFAULT 'NA' CHECK (payment_status IN ('Pending', 'Confirmed', 'NA')),
+  receipt_path TEXT,
+  patient_full_name TEXT,
+  patient_email TEXT,
+  patient_phone TEXT,
+  vitals_weight TEXT,
+  vitals_bp TEXT,
+  vitals_temperature TEXT,
+  vitals_heart_rate TEXT,
+  diagnosis TEXT,
+  allergies TEXT,
+  medicines TEXT,
+  lab_tests TEXT,
+  doctor_comments TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (doctor_user_id, appointment_date, token_number)
+);
+
+-- Create blocked_slots table
+CREATE TABLE public.blocked_slots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  doctor_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  blocked_date DATE NOT NULL,
+  blocked_time TEXT,
+  reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (doctor_user_id, blocked_date, blocked_time)
+);
+
+-- Create health_metrics table
+CREATE TABLE public.health_metrics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  metric_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  systolic INT,
+  diastolic INT,
+  sugar_level NUMERIC,
+  weight NUMERIC,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create medical_records table
+CREATE TABLE public.medical_records (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  record_date DATE NOT NULL DEFAULT CURRENT_DATE,
+  diagnosis TEXT,
+  medicines TEXT,
+  lab_tests TEXT,
+  comments TEXT,
+  doctor_name TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create reviews table
+CREATE TABLE public.reviews (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  display_name TEXT NOT NULL,
+  rating INT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  comment TEXT,
+  status TEXT NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Approved', 'Rejected')),
+  source TEXT DEFAULT 'internal',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create symptom_submissions table
+CREATE TABLE public.symptom_submissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  patient_user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  age INT,
+  gender TEXT,
+  symptoms_text TEXT,
+  selected_tags TEXT[],
+  duration TEXT,
+  severity TEXT,
+  medical_history TEXT,
+  result_condition TEXT,
+  result_confidence INT,
+  result_advice TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create audit_logs table
+CREATE TABLE public.audit_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  action TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id UUID,
+  details JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Create indexes
+CREATE INDEX idx_appointments_doctor_date ON public.appointments(doctor_user_id, appointment_date);
+CREATE INDEX idx_appointments_patient ON public.appointments(patient_user_id);
+CREATE INDEX idx_appointments_status ON public.appointments(status);
+CREATE INDEX idx_health_metrics_patient ON public.health_metrics(patient_user_id);
+CREATE INDEX idx_medical_records_patient ON public.medical_records(patient_user_id);
+CREATE INDEX idx_reviews_status ON public.reviews(status);
+CREATE INDEX idx_blocked_slots_doctor_date ON public.blocked_slots(doctor_user_id, blocked_date);
+
+-- Enable RLS on all tables
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.doctors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.pa_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.appointments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.blocked_slots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.health_metrics ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.medical_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.symptom_submissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Security definer functions for role checking (prevents infinite recursion)
+CREATE OR REPLACE FUNCTION public.get_user_role(user_uuid UUID)
+RETURNS app_role
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT role FROM public.profiles WHERE id = user_uuid;
+$$;
+
+CREATE OR REPLACE FUNCTION public.has_role(user_uuid UUID, check_role app_role)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles WHERE id = user_uuid AND role = check_role
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_pa_for_doctor(pa_uuid UUID, doctor_uuid UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.pa_assignments 
+    WHERE pa_user_id = pa_uuid AND doctor_user_id = doctor_uuid
+  );
+$$;
+
+-- Token allocation function
+CREATE OR REPLACE FUNCTION public.allocate_token(
+  p_doctor_id UUID,
+  p_date DATE
+)
+RETURNS INT
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_max_patients INT;
+  v_next_token INT;
+  v_blocked_count INT;
+BEGIN
+  -- Get max patients per day
+  SELECT max_patients_per_day INTO v_max_patients
+  FROM public.doctors WHERE user_id = p_doctor_id;
+  
+  IF v_max_patients IS NULL THEN
+    RAISE EXCEPTION 'Doctor not found';
+  END IF;
+  
+  -- Count blocked slots for the day
+  SELECT COUNT(*) INTO v_blocked_count
+  FROM public.blocked_slots 
+  WHERE doctor_user_id = p_doctor_id AND blocked_date = p_date;
+  
+  -- Get next token number
+  SELECT COALESCE(MAX(token_number), 0) + 1 INTO v_next_token
+  FROM public.appointments
+  WHERE doctor_user_id = p_doctor_id 
+    AND appointment_date = p_date 
+    AND status != 'Cancelled';
+  
+  -- Check capacity
+  IF v_next_token > (v_max_patients - v_blocked_count) THEN
+    RAISE EXCEPTION 'No slots available for this date';
+  END IF;
+  
+  RETURN v_next_token;
+END;
+$$;
+
+-- Get available slots function
+CREATE OR REPLACE FUNCTION public.get_available_slots(
+  p_doctor_id UUID,
+  p_date DATE
+)
+RETURNS INT
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT 
+    COALESCE(d.max_patients_per_day, 30) - 
+    COALESCE((SELECT COUNT(*) FROM public.appointments 
+              WHERE doctor_user_id = p_doctor_id 
+              AND appointment_date = p_date 
+              AND status != 'Cancelled'), 0) -
+    COALESCE((SELECT COUNT(*) FROM public.blocked_slots 
+              WHERE doctor_user_id = p_doctor_id 
+              AND blocked_date = p_date), 0)
+  FROM public.doctors d
+  WHERE d.user_id = p_doctor_id;
+$$;
+
+-- RLS Policies for profiles
+CREATE POLICY "Users can view own profile" ON public.profiles
+  FOR SELECT USING (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile" ON public.profiles
+  FOR UPDATE USING (auth.uid() = id);
+
+CREATE POLICY "Admins can view all profiles" ON public.profiles
+  FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
+
+CREATE POLICY "Admins can update all profiles" ON public.profiles
+  FOR UPDATE USING (public.has_role(auth.uid(), 'admin'));
+
+CREATE POLICY "Doctors can view patient profiles for their appointments" ON public.profiles
+  FOR SELECT USING (
+    public.has_role(auth.uid(), 'doctor') AND
+    EXISTS (
+      SELECT 1 FROM public.appointments 
+      WHERE appointments.patient_user_id = profiles.id 
+      AND appointments.doctor_user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "PAs can view profiles for assigned doctors" ON public.profiles
+  FOR SELECT USING (
+    public.has_role(auth.uid(), 'pa') AND (
+      -- PA can see their own profile
+      id = auth.uid() OR
+      -- PA can see assigned doctors
+      EXISTS (
+        SELECT 1 FROM public.pa_assignments 
+        WHERE pa_user_id = auth.uid() AND doctor_user_id = profiles.id
+      ) OR
+      -- PA can see patients of assigned doctors
+      EXISTS (
+        SELECT 1 FROM public.appointments a
+        JOIN public.pa_assignments pa ON pa.doctor_user_id = a.doctor_user_id
+        WHERE pa.pa_user_id = auth.uid() AND a.patient_user_id = profiles.id
+      )
+    )
+  );
+
+-- RLS Policies for user_roles
+CREATE POLICY "Users can view own roles" ON public.user_roles
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Admins can manage all roles" ON public.user_roles
+  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for doctors (public read for browsing)
+CREATE POLICY "Anyone can view doctor public info" ON public.doctors
+  FOR SELECT USING (true);
+
+CREATE POLICY "Doctors can update own info" ON public.doctors
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Admins can manage doctors" ON public.doctors
+  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for pa_assignments
+CREATE POLICY "PAs can view own assignments" ON public.pa_assignments
+  FOR SELECT USING (pa_user_id = auth.uid());
+
+CREATE POLICY "Doctors can view their PAs" ON public.pa_assignments
+  FOR SELECT USING (doctor_user_id = auth.uid());
+
+CREATE POLICY "Admins can manage PA assignments" ON public.pa_assignments
+  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for appointments
+CREATE POLICY "Patients can view own appointments" ON public.appointments
+  FOR SELECT USING (patient_user_id = auth.uid());
+
+CREATE POLICY "Patients can create own appointments" ON public.appointments
+  FOR INSERT WITH CHECK (patient_user_id = auth.uid());
+
+CREATE POLICY "Patients can update own pending appointments" ON public.appointments
+  FOR UPDATE USING (
+    patient_user_id = auth.uid() AND status IN ('Pending', 'Upcoming')
+  );
+
+CREATE POLICY "Doctors can view their appointments" ON public.appointments
+  FOR SELECT USING (doctor_user_id = auth.uid());
+
+CREATE POLICY "Doctors can update their appointments" ON public.appointments
+  FOR UPDATE USING (doctor_user_id = auth.uid());
+
+CREATE POLICY "PAs can view appointments for assigned doctors" ON public.appointments
+  FOR SELECT USING (public.is_pa_for_doctor(auth.uid(), doctor_user_id));
+
+CREATE POLICY "PAs can update appointments for assigned doctors" ON public.appointments
+  FOR UPDATE USING (public.is_pa_for_doctor(auth.uid(), doctor_user_id));
+
+CREATE POLICY "Admins can manage all appointments" ON public.appointments
+  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for blocked_slots
+CREATE POLICY "Doctors can manage own blocked slots" ON public.blocked_slots
+  FOR ALL USING (doctor_user_id = auth.uid());
+
+CREATE POLICY "PAs can manage blocked slots for assigned doctors" ON public.blocked_slots
+  FOR ALL USING (public.is_pa_for_doctor(auth.uid(), doctor_user_id));
+
+CREATE POLICY "Anyone can view blocked slots" ON public.blocked_slots
+  FOR SELECT USING (true);
+
+CREATE POLICY "Admins can manage all blocked slots" ON public.blocked_slots
+  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for health_metrics
+CREATE POLICY "Patients can manage own health metrics" ON public.health_metrics
+  FOR ALL USING (patient_user_id = auth.uid());
+
+CREATE POLICY "Doctors can view patient health metrics" ON public.health_metrics
+  FOR SELECT USING (
+    public.has_role(auth.uid(), 'doctor') AND
+    EXISTS (
+      SELECT 1 FROM public.appointments 
+      WHERE appointments.patient_user_id = health_metrics.patient_user_id 
+      AND appointments.doctor_user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Admins can view all health metrics" ON public.health_metrics
+  FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for medical_records
+CREATE POLICY "Patients can view own medical records" ON public.medical_records
+  FOR SELECT USING (patient_user_id = auth.uid());
+
+CREATE POLICY "Doctors can manage medical records for their patients" ON public.medical_records
+  FOR ALL USING (
+    public.has_role(auth.uid(), 'doctor') AND
+    EXISTS (
+      SELECT 1 FROM public.appointments 
+      WHERE appointments.patient_user_id = medical_records.patient_user_id 
+      AND appointments.doctor_user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Admins can view all medical records" ON public.medical_records
+  FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for reviews
+CREATE POLICY "Anyone can view approved reviews" ON public.reviews
+  FOR SELECT USING (status = 'Approved');
+
+CREATE POLICY "Patients can create reviews" ON public.reviews
+  FOR INSERT WITH CHECK (patient_user_id = auth.uid());
+
+CREATE POLICY "Patients can view own reviews" ON public.reviews
+  FOR SELECT USING (patient_user_id = auth.uid());
+
+CREATE POLICY "Admins can manage all reviews" ON public.reviews
+  FOR ALL USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for symptom_submissions
+CREATE POLICY "Patients can manage own symptom submissions" ON public.symptom_submissions
+  FOR ALL USING (patient_user_id = auth.uid() OR patient_user_id IS NULL);
+
+CREATE POLICY "Admins can view all symptom submissions" ON public.symptom_submissions
+  FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
+
+-- RLS Policies for audit_logs
+CREATE POLICY "Admins can view audit logs" ON public.audit_logs
+  FOR SELECT USING (public.has_role(auth.uid(), 'admin'));
+
+CREATE POLICY "System can insert audit logs" ON public.audit_logs
+  FOR INSERT WITH CHECK (true);
+
+-- Trigger to create profile on signup
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.profiles (id, name, role)
+  VALUES (
+    NEW.id, 
+    COALESCE(NEW.raw_user_meta_data ->> 'name', NEW.email),
+    COALESCE((NEW.raw_user_meta_data ->> 'role')::app_role, 'patient')
+  );
+  
+  -- Also add to user_roles
+  INSERT INTO public.user_roles (user_id, role)
+  VALUES (
+    NEW.id, 
+    COALESCE((NEW.raw_user_meta_data ->> 'role')::app_role, 'patient')
+  );
+  
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- Updated_at trigger
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER update_profiles_updated_at
+  BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_doctors_updated_at
+  BEFORE UPDATE ON public.doctors
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+CREATE TRIGGER update_appointments_updated_at
+  BEFORE UPDATE ON public.appointments
+  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Create storage buckets
+INSERT INTO storage.buckets (id, name, public) VALUES ('avatars', 'avatars', true);
+INSERT INTO storage.buckets (id, name, public) VALUES ('receipts', 'receipts', false);
+
+-- Storage policies for avatars
+CREATE POLICY "Avatar images are publicly accessible" ON storage.objects
+  FOR SELECT USING (bucket_id = 'avatars');
+
+CREATE POLICY "Users can upload own avatar" ON storage.objects
+  FOR INSERT WITH CHECK (
+    bucket_id = 'avatars' AND 
+    auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+CREATE POLICY "Users can update own avatar" ON storage.objects
+  FOR UPDATE USING (
+    bucket_id = 'avatars' AND 
+    auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+CREATE POLICY "Users can delete own avatar" ON storage.objects
+  FOR DELETE USING (
+    bucket_id = 'avatars' AND 
+    auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+-- Storage policies for receipts
+CREATE POLICY "Users can upload own receipts" ON storage.objects
+  FOR INSERT WITH CHECK (
+    bucket_id = 'receipts' AND 
+    auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+CREATE POLICY "Users can view own receipts" ON storage.objects
+  FOR SELECT USING (
+    bucket_id = 'receipts' AND 
+    auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+CREATE POLICY "Doctors can view patient receipts" ON storage.objects
+  FOR SELECT USING (
+    bucket_id = 'receipts' AND
+    EXISTS (
+      SELECT 1 FROM public.appointments a
+      WHERE a.doctor_user_id = auth.uid()
+      AND a.receipt_path LIKE '%' || storage.filename(name) || '%'
+    )
+  );
+
+CREATE POLICY "PAs can view receipts for assigned doctors" ON storage.objects
+  FOR SELECT USING (
+    bucket_id = 'receipts' AND
+    EXISTS (
+      SELECT 1 FROM public.appointments a
+      JOIN public.pa_assignments pa ON pa.doctor_user_id = a.doctor_user_id
+      WHERE pa.pa_user_id = auth.uid()
+      AND a.receipt_path LIKE '%' || storage.filename(name) || '%'
+    )
+  );
+
+CREATE POLICY "Admins can view all receipts" ON storage.objects
+  FOR SELECT USING (
+    bucket_id = 'receipts' AND
+    public.has_role(auth.uid(), 'admin')
+  );

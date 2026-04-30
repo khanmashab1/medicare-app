@@ -1,0 +1,28 @@
+{
+  "cli": {
+    "version": ">= 5.9.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "npm_config_legacy_peer_deps": "true"
+      }
+    },
+    "production": {
+      "channel": "production",
+      "autoIncrement": true,
+      "env": {
+        "npm_config_legacy_peer_deps": "true"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "android": {},
+      "ios": {}
+    }
+  }
+}

@@ -1,0 +1,280 @@
+Build a complete React (JSX, single file) healthcare appointment app called "MediCare+" 
+that fetches ALL data from a real Supabase database.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔌 SUPABASE CONFIG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SUPABASE_URL = https://zikbiesawrowlkhvrbmz.supabase.co
+SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inppa2JpZXNhd3Jvd2xraHZyYm16Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDM3NjI4NDcsImV4cCI6MjA1OTMzODg0N30.placeholder
+
+Load the Supabase JS client from CDN:
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+Initialize: const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔑 AUTH — Patient Login/Register
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Show a Login screen first (before the app).
+- Email + Password fields
+- "Sign In" button → supabase.auth.signInWithPassword()
+- "Register" toggle → supabase.auth.signUp() with metadata: { name, role: 'patient' }
+- On success: load patient profile from profiles table WHERE id = user.id
+- On logout: supabase.auth.signOut()
+- Listen to supabase.auth.onAuthStateChange() to manage session
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎨 COLOR SYSTEM (exact Medicare project palette)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Inject into <style> tag in :root:
+
+:root {
+  --primary: hsl(174, 72%, 40%);
+  --primary-light: hsl(174, 72%, 95%);
+  --primary-dark: hsl(174, 72%, 30%);
+  --secondary: hsl(210, 80%, 50%);
+  --secondary-light: hsl(210, 80%, 95%);
+  --green: hsl(142, 60%, 42%);
+  --green-light: hsl(142, 60%, 94%);
+  --coral: hsl(0, 72%, 58%);
+  --coral-light: hsl(0, 72%, 95%);
+  --gold: hsl(42, 85%, 52%);
+  --gold-light: hsl(42, 85%, 95%);
+  --purple: hsl(262, 60%, 55%);
+  --purple-light: hsl(262, 60%, 95%);
+  --yellow: hsl(45, 93%, 58%);
+  --yellow-light: hsl(45, 93%, 95%);
+  --bg: hsl(210, 40%, 98%);
+  --surface: #ffffff;
+  --border: hsl(214, 32%, 91%);
+  --text: hsl(222, 47%, 11%);
+  --muted: hsl(215, 16%, 47%);
+  --radius: 0.75rem;
+  --shadow-card: 0 4px 24px -4px rgba(16,185,129,0.10);
+  --shadow-btn: 0 4px 14px -2px rgba(16,185,129,0.25);
+  --gradient-brand: linear-gradient(135deg, hsl(174,72%,40%), hsl(210,80%,50%));
+}
+
+Font: Inter from Google Fonts.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📱 APP LAYOUT — Sidebar + 4 Views
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Fixed sidebar (desktop, 240px wide) / bottom nav bar (mobile).
+Nav items: Dashboard | Book Appointment | My Appointments | Reviews
+Active item: background var(--primary), white text, rounded.
+Logo: stethoscope emoji + "MediCare+" in gradient text.
+Bottom of sidebar: patient avatar + name + "Logout" button.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 VIEW 1: PATIENT DASHBOARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FETCH on mount:
+  const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+  const { data: appointments } = await supabase
+    .from('appointments')
+    .select('*, doctor:doctor_user_id(name, specialty, rating, fee, city)')
+    .eq('patient_user_id', user.id)
+    .order('appointment_date', { ascending: false })
+
+RENDER:
+- Header: "Good morning, [profile.name] 👋" + today's date
+- Profile card: initials avatar (teal gradient circle), name, phone, blood_type, city, age, gender
+- Stats cards (4):
+    Total = appointments.length
+    Upcoming = filter status='Upcoming'
+    Completed = filter status='Completed'
+    Cancelled = filter status='Cancelled'
+  Colors: teal, blue, green, coral
+- Upcoming Appointments (next 3, status='Upcoming' or 'Pending'):
+    Each card: doctor initials avatar | doctor name + specialty tag | date + "Token #X" | status badge
+    Status badge colors: Upcoming=teal, Completed=green, Cancelled=coral, Pending=yellow
+- Quick Actions: "Book Appointment" (teal gradient btn) | "View All" (outlined btn)
+- Show skeleton loaders while fetching
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📅 VIEW 2: BOOK APPOINTMENT (4-step wizard)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Step progress bar at top (4 steps, teal active fill).
+
+─── STEP 1: SELECT SPECIALTY ───
+FETCH: const { data: doctors } = await supabase.from('doctors').select('specialty')
+Extract unique specialties. Show grid of specialty cards (2 col mobile, 3 col desktop):
+  Cardiology, Dermatology, General Medicine, Neurology, Orthopedics, Pediatrics, Gynecology, ENT
+  Each card: emoji icon + specialty name + "X doctors available"
+  Selected: teal border + light teal bg
+
+─── STEP 2: SELECT DOCTOR ───
+FETCH: const { data: doctors } = await supabase
+  .from('doctors')
+  .select('*, profile:user_id(name, city, province)')
+  .eq('specialty', selectedSpecialty)
+
+Doctor cards:
+  - Initials avatar (teal gradient)
+  - Name, specialty
+  - Star rating (gold, e.g. ★ 4.8)
+  - Experience: "12 yrs experience"
+  - Fee: "Rs. 1,500"
+  - City, Province
+  - "Available Today" green badge
+  - "Select Doctor" button → teal filled when selected
+
+─── STEP 3: SELECT DATE & TOKEN ───
+Show next 14 days as horizontal scrollable date pills.
+Selected date = teal filled circle.
+
+FETCH available tokens:
+  const { data: booked } = await supabase
+    .from('appointments')
+    .select('token_number')
+    .eq('doctor_user_id', selectedDoctor.user_id)
+    .eq('appointment_date', selectedDate)
+    .neq('status', 'Cancelled')
+
+  const { data: doctorInfo } = await supabase
+    .from('doctors')
+    .select('max_patients_per_day, easypaisa_number')
+    .eq('user_id', selectedDoctor.user_id)
+    .single()
+
+Show token grid 1–max_patients_per_day:
+  Available = white card, hover teal border
+  Booked = gray disabled
+  Selected = teal filled
+Show: "X slots available"
+
+Payment method toggle: Cash | Online (Easypaisa)
+If Online: show easypaisa_number + simulated receipt upload input
+
+─── STEP 4: CONFIRM & SUBMIT ───
+Summary card showing all selections.
+Fields: reason (textarea), patient_full_name, patient_email, patient_phone (pre-filled from profile).
+
+On "Confirm Appointment":
+  1. Show 1s loading spinner
+  2. INSERT into appointments:
+    await supabase.from('appointments').insert({
+      patient_user_id: user.id,
+      doctor_user_id: selectedDoctor.user_id,
+      appointment_date: selectedDate,
+      token_number: selectedToken,
+      department: selectedSpecialty,
+      reason: reason,
+      status: paymentMethod === 'Online' ? 'Pending' : 'Upcoming',
+      payment_method: paymentMethod,
+      payment_status: paymentMethod === 'Online' ? 'Pending' : 'NA',
+      patient_full_name: patientName,
+      patient_email: patientEmail,
+      patient_phone: patientPhone,
+    })
+  3. Show success toast
+  4. Navigate to My Appointments view
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🗂️ VIEW 3: MY APPOINTMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FETCH:
+  const { data: appointments } = await supabase
+    .from('appointments')
+    .select('*, doctor:doctor_user_id(name, specialty, rating, fee, city, province)')
+    .eq('patient_user_id', user.id)
+    .order('appointment_date', { ascending: false })
+
+Tab bar: Upcoming | Completed | Cancelled | Pending
+Each tab shows count badge (number of records).
+
+Appointment card:
+  Left: large token circle (teal bg, white number)
+  Center: doctor name + specialty chip + date + department
+  Right: status badge + action buttons
+
+Action buttons:
+  Upcoming: "Cancel" button (coral outlined)
+    → On click: show inline "Are you sure? Yes / No"
+    → On Yes: UPDATE appointments SET status='Cancelled' WHERE id=appt.id
+              refresh list, show toast "Appointment cancelled"
+  Completed: "Leave Review" button (teal filled)
+    → Opens review modal (see below)
+  All: "View Details" toggle → expands card showing:
+      Vitals: weight, BP, temperature, heart_rate
+      Diagnosis, Medicines, Lab Tests, Doctor Comments
+      (show "—" if empty)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+⭐ VIEW 4: REVIEWS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FETCH:
+  const { data: myReviews } = await supabase
+    .from('reviews')
+    .select('*')
+    .eq('patient_user_id', user.id)
+    .order('created_at', { ascending: false })
+
+  const { data: completedAppts } = await supabase
+    .from('appointments')
+    .select('*, doctor:doctor_user_id(name, specialty)')
+    .eq('patient_user_id', user.id)
+    .eq('status', 'Completed')
+
+  const { data: approvedReviews } = await supabase
+    .from('reviews')
+    .select('*')
+    .eq('status', 'Approved')
+    .order('created_at', { ascending: false })
+
+  // Find completed appointments not yet reviewed
+  const reviewedApptIds = myReviews.map(r => r.appointment_id)
+  const pendingReview = completedAppts.filter(a => !reviewedApptIds.includes(a.id))
+
+SECTION 1 — "Rate Your Experience":
+  List of pendingReview appointments.
+  Each: doctor name + specialty + date + "Write Review" button
+  On click: expand inline review form:
+    - display_name input (pre-filled: profile.name)
+    - 5 interactive gold stars (click to select)
+    - comment textarea
+    - "Submit" button → INSERT into reviews:
+        { patient_user_id: user.id, display_name, rating, comment, status: 'Pending', source: 'internal' }
+      Show toast "Review submitted — pending approval"
+      Refresh all review data
+
+SECTION 2 — "My Reviews":
+  List of myReviews.
+  Each card: stars display (gold) + comment + date + status badge
+  Status: Pending=yellow, Approved=green, Rejected=coral
+
+SECTION 3 — "What Patients Say" (public approved reviews):
+  Grid of approvedReviews cards.
+  Each: initials avatar + display_name + stars + comment + date
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🛠️ TECHNICAL REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+- Single HTML file (no build tools, no TypeScript)
+- React 18 via CDN (unpkg), Babel standalone via CDN
+- Supabase JS v2 via CDN (jsdelivr)
+- All styles in one <style> tag using CSS variables above
+- No Tailwind — use pure CSS with the variable system
+- React hooks: useState, useEffect, useCallback, useMemo
+- Skeleton loaders (animated shimmer) while fetching
+- Toast notifications: fixed bottom-right, auto-dismiss 3s
+- Loading spinner on all async actions
+- Error states: show error message if fetch fails with retry button
+- Responsive: sidebar on desktop (≥768px), bottom nav on mobile
+- Smooth view transitions (CSS opacity + translateY)
+- All cards: border-radius var(--radius), box-shadow var(--shadow-card)
+- Primary buttons: background var(--gradient-brand), color white, box-shadow var(--shadow-btn)
+- Status badge colors strictly: Upcoming=teal, Completed=green, Cancelled=coral, Pending=yellow
+- Initials avatars: extract first letter of each word in name, teal gradient background
+- Star rating: filled ★ = gold, empty ★ = var(--border) color
+- Re-fetch data after every mutation (insert/update) to keep UI in sync
+- Handle empty states gracefully with helpful messages and icons
