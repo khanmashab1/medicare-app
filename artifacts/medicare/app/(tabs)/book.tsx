@@ -97,7 +97,7 @@ export default function BookScreen() {
       // pre-fill patient info when screen focuses
       if (profile) {
         setPatientName(profile.name ?? "");
-        setPatientEmail(profile.email ?? user?.email ?? "");
+        setPatientEmail(user?.email ?? "");
         setPatientPhone(profile.phone ?? "");
       }
     }, [profile, user]),

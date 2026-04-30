@@ -31,13 +31,15 @@ export interface Profile {
   id: string;
   name: string | null;
   phone: string | null;
-  email: string | null;
   blood_type: string | null;
   city: string | null;
   province: string | null;
   age: number | null;
   gender: string | null;
   role: string | null;
+  patient_id: string | null;
+  date_of_birth: string | null;
+  status: string | null;
 }
 
 export interface Doctor {
@@ -51,6 +53,11 @@ export interface Doctor {
   province: string | null;
   max_patients_per_day: number | null;
   easypaisa_number: string | null;
+  image_path: string | null;
+  bio: string | null;
+  degree: string | null;
+  qualifications: string | null;
+  clinic_address: string | null;
   profile?: { name: string | null; city: string | null; province: string | null } | null;
 }
 
@@ -68,10 +75,10 @@ export interface Appointment {
   patient_full_name: string | null;
   patient_email: string | null;
   patient_phone: string | null;
-  weight: string | null;
-  bp: string | null;
-  temperature: string | null;
-  heart_rate: string | null;
+  vitals_weight: string | null;
+  vitals_bp: string | null;
+  vitals_temperature: string | null;
+  vitals_heart_rate: string | null;
   diagnosis: string | null;
   medicines: string | null;
   lab_tests: string | null;

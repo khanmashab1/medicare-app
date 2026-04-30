@@ -399,10 +399,10 @@ function DetailsSection({ appt }: { appt: Appointment }) {
         Vitals
       </Text>
       <View style={styles.vitalsGrid}>
-        <Vital label="Weight" value={appt.weight} unit="kg" />
-        <Vital label="BP" value={appt.bp} />
-        <Vital label="Temp" value={appt.temperature} unit="°F" />
-        <Vital label="Heart" value={appt.heart_rate} unit="bpm" />
+        <Vital label="Weight" value={appt.vitals_weight} unit="kg" />
+        <Vital label="BP" value={appt.vitals_bp} />
+        <Vital label="Temp" value={appt.vitals_temperature} unit="°F" />
+        <Vital label="Heart" value={appt.vitals_heart_rate} unit="bpm" />
       </View>
 
       <Text style={[styles.detailsHeading, { color: colors.foreground, marginTop: 14 }]}>

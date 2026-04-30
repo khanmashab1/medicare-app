@@ -168,7 +168,7 @@ export default function DashboardScreen() {
                 style={[styles.profileSub, { color: colors.mutedForeground }]}
                 numberOfLines={1}
               >
-                {profile?.email ?? user?.email ?? "—"}
+                {user?.email ?? "—"}
               </Text>
             </View>
           </View>

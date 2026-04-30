@@ -96,7 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (userId) {
         await supabase
           .from("profiles")
-          .upsert({ id: userId, name, email, role: "patient" });
+          .upsert({ id: userId, name, role: "patient" });
       }
       return { error: null };
     },
