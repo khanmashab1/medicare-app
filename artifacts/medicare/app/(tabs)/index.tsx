@@ -191,7 +191,24 @@ export default function DashboardScreen() {
             <ProfileField
               icon="person-outline"
               label="Age"
-              value={profile?.age != null ? String(profile.age) : null}
+              value={
+                profile?.age != null
+                  ? String(profile.age)
+                  : profile?.date_of_birth
+                    ? String(
+                        new Date().getFullYear() -
+                          new Date(profile.date_of_birth).getFullYear() -
+                          (new Date() <
+                          new Date(
+                            new Date().getFullYear(),
+                            new Date(profile.date_of_birth).getMonth(),
+                            new Date(profile.date_of_birth).getDate(),
+                          )
+                            ? 1
+                            : 0),
+                      )
+                    : null
+              }
             />
           </View>
         </View>

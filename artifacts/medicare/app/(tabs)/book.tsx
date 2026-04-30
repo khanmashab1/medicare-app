@@ -109,14 +109,20 @@ export default function BookScreen() {
     let mounted = true;
     (async () => {
       setLoadingSpecs(true);
-      const { data, error } = await supabase
+      let { data } = await supabase
         .from("doctors")
         .select("specialty")
         .eq("city", selectedCity);
       if (!mounted) return;
+      // Fall back to all doctors if none in this city
+      if (!data || data.length === 0) {
+        const fallback = await supabase.from("doctors").select("specialty");
+        if (!mounted) return;
+        data = fallback.data;
+      }
       const counts: Record<string, number> = {};
       for (const sp of DEFAULT_SPECIALTIES) counts[sp] = 0;
-      if (!error && data) {
+      if (data) {
         for (const r of data as { specialty: string | null }[]) {
           if (r.specialty) {
             counts[r.specialty] = (counts[r.specialty] ?? 0) + 1;
@@ -137,26 +143,23 @@ export default function BookScreen() {
     let mounted = true;
     (async () => {
       setLoadingDoctors(true);
-      // Try city-level first, then fall back to all doctors with that specialty
-      let { data: docRows, error } = await supabase
+      // Try city-level first
+      let { data: docRows } = await supabase
         .from("doctors")
         .select("*")
         .eq("specialty", selectedSpecialty)
         .eq("city", selectedCity);
       if (!mounted) return;
-      // Fallback: fetch without city filter if nothing found
-      if ((error || !docRows || docRows.length === 0) && !error) {
-        const fallback = await supabase
+      // Always fall back to all doctors with that specialty if city returns nothing
+      if (!docRows || docRows.length === 0) {
+        const { data: fallbackRows } = await supabase
           .from("doctors")
           .select("*")
           .eq("specialty", selectedSpecialty);
         if (!mounted) return;
-        if (!fallback.error && fallback.data && fallback.data.length > 0) {
-          docRows = fallback.data;
-          error = null;
-        }
+        docRows = fallbackRows ?? [];
       }
-      if (error || !docRows || docRows.length === 0) {
+      if (!docRows || docRows.length === 0) {
         setDoctors([]);
         setLoadingDoctors(false);
         return;
