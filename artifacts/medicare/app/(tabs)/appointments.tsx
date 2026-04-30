@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 
 import { AppButton } from "@/components/PrimaryButton";
 import { EmptyState } from "@/components/EmptyState";
@@ -38,6 +39,7 @@ export default function AppointmentsScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const toast = useToast();
+  const router = useRouter();
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [activeTab, setActiveTab] = useState<AppointmentStatus>("Upcoming");
@@ -256,6 +258,9 @@ export default function AppointmentsScreen() {
                 onAskCancel={() => setConfirmCancelId(a.id)}
                 onConfirmCancel={() => cancel(a.id)}
                 onAbortCancel={() => setConfirmCancelId(null)}
+                onViewPrescription={() =>
+                  router.push(`/prescription/${a.id}` as any)
+                }
               />
             ))}
           </View>
@@ -274,6 +279,7 @@ function ApptCard({
   onAskCancel,
   onConfirmCancel,
   onAbortCancel,
+  onViewPrescription,
 }: {
   appt: Appointment;
   expanded: boolean;
@@ -283,6 +289,7 @@ function ApptCard({
   onAskCancel: () => void;
   onConfirmCancel: () => void;
   onAbortCancel: () => void;
+  onViewPrescription: () => void;
 }) {
   const colors = useColors();
   const doctorName = appt.doctor?.name ?? "Doctor";
@@ -383,6 +390,17 @@ function ApptCard({
               onPress={onAskCancel}
             />
           )
+        ) : appt.status === "Completed" ? (
+          <Pressable
+            onPress={onViewPrescription}
+            style={({ pressed }) => [
+              styles.rxBtn,
+              { opacity: pressed ? 0.7 : 1 },
+            ]}
+          >
+            <Ionicons name="document-text-outline" size={14} color="#10b981" />
+            <Text style={styles.rxBtnText}>Prescription</Text>
+          </Pressable>
         ) : null}
       </View>
 
@@ -636,5 +654,21 @@ const styles = StyleSheet.create({
   emptyCard: {
     borderRadius: 16,
     borderWidth: 1,
+  },
+  rxBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#10b981",
+    backgroundColor: "#0a2e24",
+  },
+  rxBtnText: {
+    color: "#10b981",
+    fontFamily: "Inter_600SemiBold",
+    fontSize: 12,
   },
 });

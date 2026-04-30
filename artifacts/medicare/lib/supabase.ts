@@ -83,6 +83,8 @@ export interface Appointment {
   medicines: string | null;
   lab_tests: string | null;
   doctor_comments: string | null;
+  allergies: string | null;
+  follow_up_date: string | null;
   doctor?: {
     name: string | null;
     specialty: string | null;

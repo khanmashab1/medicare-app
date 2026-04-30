@@ -137,12 +137,25 @@ export default function BookScreen() {
     let mounted = true;
     (async () => {
       setLoadingDoctors(true);
-      const { data: docRows, error } = await supabase
+      // Try city-level first, then fall back to all doctors with that specialty
+      let { data: docRows, error } = await supabase
         .from("doctors")
         .select("*")
         .eq("specialty", selectedSpecialty)
         .eq("city", selectedCity);
       if (!mounted) return;
+      // Fallback: fetch without city filter if nothing found
+      if ((error || !docRows || docRows.length === 0) && !error) {
+        const fallback = await supabase
+          .from("doctors")
+          .select("*")
+          .eq("specialty", selectedSpecialty);
+        if (!mounted) return;
+        if (!fallback.error && fallback.data && fallback.data.length > 0) {
+          docRows = fallback.data;
+          error = null;
+        }
+      }
       if (error || !docRows || docRows.length === 0) {
         setDoctors([]);
         setLoadingDoctors(false);
