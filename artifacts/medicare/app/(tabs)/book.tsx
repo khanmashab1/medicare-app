@@ -23,6 +23,7 @@ import { formatShortDate, getNext14Days } from "@/lib/format";
 import { CITIES_BY_PROVINCE, PROVINCES } from "@/lib/locations";
 import { DEFAULT_SPECIALTIES, SPECIALTY_ICONS } from "@/lib/specialties";
 import { supabase, type Doctor } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 
@@ -109,84 +110,57 @@ export default function BookScreen() {
     let mounted = true;
     (async () => {
       setLoadingSpecs(true);
-      let { data } = await supabase
-        .from("doctors")
-        .select("specialty")
-        .eq("city", selectedCity);
-      if (!mounted) return;
-      // Fall back to all doctors if none in this city
-      if (!data || data.length === 0) {
-        const fallback = await supabase.from("doctors").select("specialty");
-        if (!mounted) return;
-        data = fallback.data;
-      }
-      const counts: Record<string, number> = {};
-      for (const sp of DEFAULT_SPECIALTIES) counts[sp] = 0;
-      if (data) {
-        for (const r of data as { specialty: string | null }[]) {
-          if (r.specialty) {
-            counts[r.specialty] = (counts[r.specialty] ?? 0) + 1;
-          }
+      try {
+        const rows = await apiFetch<{ specialty: string | null }[]>(
+          `/doctors?city=${encodeURIComponent(selectedCity)}`,
+        );
+        const counts: Record<string, number> = {};
+        for (const sp of DEFAULT_SPECIALTIES) counts[sp] = 0;
+        for (const r of rows) {
+          if (r.specialty) counts[r.specialty] = (counts[r.specialty] ?? 0) + 1;
         }
+        if (!mounted) return;
+        setSpecialtyCounts(counts);
+      } catch {
+        if (!mounted) return;
+        // fall back: all specialties at 0
+        const counts: Record<string, number> = {};
+        for (const sp of DEFAULT_SPECIALTIES) counts[sp] = 0;
+        setSpecialtyCounts(counts);
       }
-      setSpecialtyCounts(counts);
       setLoadingSpecs(false);
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [selectedCity]);
 
-  // Load doctors when specialty selected
+  // Load doctors when specialty selected (via API server to bypass RLS)
   useEffect(() => {
     if (!selectedSpecialty || !selectedCity) return;
     let mounted = true;
     (async () => {
       setLoadingDoctors(true);
-      // Try city-level first
-      let { data: docRows } = await supabase
-        .from("doctors")
-        .select("*")
-        .eq("specialty", selectedSpecialty)
-        .eq("city", selectedCity);
-      if (!mounted) return;
-      // Always fall back to all doctors with that specialty if city returns nothing
-      if (!docRows || docRows.length === 0) {
-        const { data: fallbackRows } = await supabase
-          .from("doctors")
-          .select("*")
-          .eq("specialty", selectedSpecialty);
+      try {
+        type ApiDoctor = Doctor & { profile_name: string | null };
+        const rows = await apiFetch<ApiDoctor[]>(
+          `/doctors?specialty=${encodeURIComponent(selectedSpecialty)}&city=${encodeURIComponent(selectedCity)}`,
+        );
         if (!mounted) return;
-        docRows = fallbackRows ?? [];
-      }
-      if (!docRows || docRows.length === 0) {
+        const enriched = rows.map((d) => ({
+          ...d,
+          profile: {
+            name: d.profile_name ?? null,
+            city: d.city,
+            province: d.province,
+          },
+        }));
+        setDoctors(enriched);
+      } catch {
+        if (!mounted) return;
         setDoctors([]);
-        setLoadingDoctors(false);
-        return;
       }
-      const ids = (docRows as Doctor[]).map((d) => d.user_id);
-      const { data: profs } = await supabase
-        .from("profiles")
-        .select("id, name")
-        .in("id", ids);
-      const nameById = new Map<string, string | null>();
-      for (const p of (profs ?? []) as Array<{ id: string; name: string | null }>) {
-        nameById.set(p.id, p.name);
-      }
-      const enriched = (docRows as Doctor[]).map((d) => ({
-        ...d,
-        profile: {
-          name: nameById.get(d.user_id) ?? null,
-          city: d.city,
-          province: d.province,
-        },
-      }));
-      setDoctors(enriched);
       setLoadingDoctors(false);
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [selectedSpecialty, selectedCity]);
 
   // Load tokens when doctor + date selected
@@ -196,29 +170,20 @@ export default function BookScreen() {
     (async () => {
       setLoadingTokens(true);
       setSelectedToken(null);
-      const [bookedRes, infoRes] = await Promise.all([
-        supabase
-          .from("appointments")
-          .select("token_number")
-          .eq("doctor_user_id", selectedDoctor.user_id)
-          .eq("appointment_date", selectedDate)
-          .neq("status", "Cancelled"),
-        supabase
-          .from("doctors")
-          .select("max_patients_per_day, easypaisa_number")
-          .eq("user_id", selectedDoctor.user_id)
-          .maybeSingle(),
-      ]);
-      if (!mounted) return;
-      const tokens = (bookedRes.data ?? []) as { token_number: number }[];
-      setBookedTokens(tokens.map((t) => t.token_number));
+      try {
+        const tokens = await apiFetch<number[]>(
+          `/booked-tokens?doctor_user_id=${encodeURIComponent(selectedDoctor.user_id)}&date=${encodeURIComponent(selectedDate)}`,
+        );
+        if (!mounted) return;
+        setBookedTokens(Array.isArray(tokens) ? tokens : []);
+      } catch {
+        if (!mounted) return;
+        setBookedTokens([]);
+      }
+      // Use doctor info already loaded into selectedDoctor
       setDoctorInfo({
-        max_patients_per_day:
-          (infoRes.data as { max_patients_per_day: number } | null)
-            ?.max_patients_per_day ?? 20,
-        easypaisa_number:
-          (infoRes.data as { easypaisa_number: string | null } | null)
-            ?.easypaisa_number ?? null,
+        max_patients_per_day: selectedDoctor.max_patients_per_day ?? 20,
+        easypaisa_number: selectedDoctor.easypaisa_number ?? null,
       });
       setLoadingTokens(false);
     })();
