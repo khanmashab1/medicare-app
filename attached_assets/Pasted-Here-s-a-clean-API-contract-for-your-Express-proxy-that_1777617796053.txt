@@ -1,0 +1,384 @@
+Here's a clean API contract for your Express proxy that the Expo app can call. The proxy uses the Supabase service role key server-side so it can bypass RLS where needed (specialty/doctor catalog), while patient-scoped reads/writes go directly from the app to Supabase using the user's JWT.
+
+---
+
+Setup
+
+Environment variables (server)
+```env
+SUPABASE_URL=https://zikbiesawrowlkhvrbmz.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_ANON_KEY=
+PORT=4000
+ALLOWED_ORIGIN=*   # or your app domain
+```
+
+Two Supabase clients
+```js
+// server/supabase.js
+const { createClient } = require('@supabase/supabase-js');
+
+// Admin client — bypasses RLS, used ONLY for safe public catalog reads
+const admin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  { auth: { autoRefreshToken: false, persistSession: false } }
+);
+
+// Per-request client — runs as the calling user (RLS enforced)
+function userClient(jwt) {
+  return createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+}
+
+module.exports = { admin, userClient };
+```
+
+Auth middleware
+```js
+// server/auth.js
+const { admin } = require('./supabase');
+
+async function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Missing bearer token' });
+  }
+  const token = header.slice(7);
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data?.user) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  req.user = data.user;
+  req.jwt = token;
+  next();
+}
+
+module.exports = { requireAuth };
+```
+
+The mobile app sends `Authorization: Bearer ` on every protected call. Get it via:
+```ts
+const { data: { session } } = await supabase.auth.getSession();
+const token = session?.access_token;
+```
+
+---
+
+Endpoints
+
+🟢 Public catalog (no auth required — uses admin client)
+
+`GET /api/locations`
+List provinces and cities that have at least one doctor.
+```js
+app.get('/api/locations', async (_req, res) => {
+  const { data, error } = await admin
+    .from('doctors')
+    .select('province, city')
+    .not('province', 'is', null)
+    .not('city', 'is', null);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const map = {};
+  for (const r of data) {
+    if (!map[r.province]) map[r.province] = new Set();
+    map[r.province].add(r.city);
+  }
+  const result = Object.entries(map).map(([province, cities]) => ({
+    province,
+    cities: [...cities].sort(),
+  }));
+  res.json(result);
+});
+```
+
+`GET /api/specialties?province=…&city=…`
+Specialties + doctor counts in that location.
+```js
+app.get('/api/specialties', async (req, res) => {
+  const { province, city } = req.query;
+  if (!province || !city) return res.status(400).json({ error: 'province and city required' });
+
+  const { data, error } = await admin
+    .from('doctors')
+    .select('specialty')
+    .eq('province', province)
+    .eq('city', city);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const counts = {};
+  for (const r of data) counts[r.specialty] = (counts[r.specialty] || 0) + 1;
+  res.json(Object.entries(counts).map(([specialty, doctor_count]) => ({ specialty, doctor_count })));
+});
+```
+
+`GET /api/doctors?province=…&city=…&specialty=…`
+Doctor cards for Step 3.
+```js
+app.get('/api/doctors', async (req, res) => {
+  const { province, city, specialty } = req.query;
+  if (!province || !city || !specialty)
+    return res.status(400).json({ error: 'province, city, specialty required' });
+
+  // Doctors
+  const { data: docs, error } = await admin
+    .from('doctors')
+    .select(`
+      user_id, specialty, degree, qualifications, bio, fee, rating,
+      experience_years, image_path, city, province, clinic_address,
+      consultation_duration, max_patients_per_day,
+      easypaisa_number, jazzcash_number,
+      bank_name, bank_account_number, bank_account_title
+    `)
+    .eq('province', province)
+    .eq('city', city)
+    .eq('specialty', specialty);
+  if (error) return res.status(500).json({ error: error.message });
+  if (!docs.length) return res.json([]);
+
+  // Names from profiles
+  const ids = docs.map(d => d.user_id);
+  const { data: profs } = await admin.from('profiles').select('id, name').in('id', ids);
+  const nameMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+
+  res.json(docs.map(d => ({ ...d, name: nameMap[d.user_id] || 'Doctor' })));
+});
+```
+
+`GET /api/doctors/:id/availability?date=YYYY-MM-DD`
+Returns booked tokens, blocked slots, and available count for a date.
+```js
+app.get('/api/doctors/:id/availability', async (req, res) => {
+  const { id } = req.params;
+  const { date } = req.query;
+  if (!date) return res.status(400).json({ error: 'date required' });
+
+  const [doc, booked, blocked, avail] = await Promise.all([
+    admin.from('doctors').select('max_patients_per_day, consultation_duration, delay_minutes').eq('user_id', id).maybeSingle(),
+    admin.from('appointments').select('token_number, status').eq('doctor_user_id', id).eq('appointment_date', date).neq('status', 'Cancelled'),
+    admin.from('blocked_slots').select('blocked_time, reason').eq('doctor_user_id', id).eq('blocked_date', date),
+    admin.rpc('get_available_slots', { p_doctor_id: id, p_date: date }),
+  ]);
+
+  res.json({
+    max_patients_per_day: doc.data?.max_patients_per_day ?? 30,
+    consultation_duration: doc.data?.consultation_duration ?? 15,
+    delay_minutes: doc.data?.delay_minutes ?? 0,
+    booked_tokens: (booked.data || []).map(b => b.token_number),
+    blocked_slots: blocked.data || [],
+    available_count: avail.data ?? 0,
+  });
+});
+```
+
+`GET /api/doctors/:id/schedule`
+Working hours + recurring breaks (for displaying clinic hours).
+```js
+app.get('/api/doctors/:id/schedule', async (req, res) => {
+  const { id } = req.params;
+  const [sched, breaks] = await Promise.all([
+    admin.from('doctor_schedules').select('day_of_week, start_time, end_time, is_available').eq('doctor_user_id', id),
+    admin.from('doctor_breaks').select('break_name, start_time, end_time, applies_to_days, is_active').eq('doctor_user_id', id).eq('is_active', true),
+  ]);
+  res.json({ schedule: sched.data || [], breaks: breaks.data || [] });
+});
+```
+
+---
+
+🔒 Patient-scoped (require Bearer token — uses `userClient`)
+
+`POST /api/appointments`  — Book an appointment
+```js
+app.post('/api/appointments', requireAuth, async (req, res) => {
+  const sb = userClient(req.jwt);
+  const {
+    doctor_user_id, appointment_date, reason, department,
+    payment_method, receipt_path,
+    patient_full_name, patient_phone, patient_email,
+  } = req.body || {};
+
+  if (!doctor_user_id || !appointment_date || !payment_method)
+    return res.status(400).json({ error: 'doctor_user_id, appointment_date, payment_method required' });
+
+  // 1) Allocate token atomically (DB enforces 1-per-day rule)
+  const { data: token, error: tErr } = await sb.rpc('allocate_token', {
+    p_doctor_id: doctor_user_id,
+    p_date: appointment_date,
+  });
+  if (tErr) return res.status(409).json({ error: tErr.message });
+
+  // 2) Insert appointment
+  const { data, error } = await sb.from('appointments').insert({
+    patient_user_id: req.user.id,
+    doctor_user_id,
+    appointment_date,
+    token_number: token,
+    reason,
+    department,
+    payment_method,
+    payment_status: payment_method === 'Online' ? 'Pending' : 'NA',
+    receipt_path: receipt_path || null,
+    patient_full_name,
+    patient_phone,
+    patient_email,
+    status: 'Pending',
+  }).select().single();
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(201).json(data);
+});
+```
+
+`GET /api/appointments`  — List my appointments (with doctor names joined)
+```js
+app.get('/api/appointments', requireAuth, async (req, res) => {
+  const sb = userClient(req.jwt);
+  const { data: appts, error } = await sb
+    .from('appointments')
+    .select('*')
+    .eq('patient_user_id', req.user.id)
+    .order('appointment_date', { ascending: false });
+  if (error) return res.status(400).json({ error: error.message });
+
+  if (!appts.length) return res.json([]);
+  const docIds = [...new Set(appts.map(a => a.doctor_user_id))];
+
+  // Use admin to join names/specialties (RLS hides doctors from patient)
+  const [{ data: profs }, { data: docs }] = await Promise.all([
+    admin.from('profiles').select('id, name').in('id', docIds),
+    admin.from('doctors').select('user_id, specialty, image_path').in('user_id', docIds),
+  ]);
+  const pMap = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+  const dMap = Object.fromEntries((docs || []).map(d => [d.user_id, d]));
+
+  res.json(appts.map(a => ({
+    ...a,
+    doctor_name: pMap[a.doctor_user_id] || 'Doctor',
+    doctor_specialty: dMap[a.doctor_user_id]?.specialty || null,
+    doctor_image_path: dMap[a.doctor_user_id]?.image_path || null,
+  })));
+});
+```
+
+`PATCH /api/appointments/:id/cancel`
+```js
+app.patch('/api/appointments/:id/cancel', requireAuth, async (req, res) => {
+  const sb = userClient(req.jwt);
+  const { data, error } = await sb
+    .from('appointments')
+    .update({ status: 'Cancelled' })
+    .eq('id', req.params.id)
+    .eq('patient_user_id', req.user.id)
+    .in('status', ['Pending', 'Upcoming'])
+    .select().single();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Not found or not cancellable' });
+  res.json(data);
+});
+```
+
+`GET /api/appointments/:id/prescription`  — public, uses safe RPC
+```js
+app.get('/api/appointments/:id/prescription', async (req, res) => {
+  const { data, error } = await admin.rpc('get_prescription_verification', {
+    p_appointment_id: req.params.id,
+  });
+  if (error) return res.status(404).json({ error: error.message });
+  res.json(data);
+});
+```
+
+`GET /api/me`  — current patient profile
+```js
+app.get('/api/me', requireAuth, async (req, res) => {
+  const sb = userClient(req.jwt);
+  const { data, error } = await sb
+    .from('profiles')
+    .select('id, name, email, phone, blood_type, city, date_of_birth, patient_id, avatar_path')
+    .eq('id', req.user.id)
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data);
+});
+```
+
+`GET /api/stats`  — 4 counts for the home dashboard
+```js
+app.get('/api/stats', requireAuth, async (req, res) => {
+  const sb = userClient(req.jwt);
+  const { data, error } = await sb
+    .from('appointments')
+    .select('status')
+    .eq('patient_user_id', req.user.id);
+  if (error) return res.status(400).json({ error: error.message });
+
+  const counts = { total: data.length, upcoming: 0, completed: 0, cancelled: 0 };
+  for (const a of data) {
+    if (a.status === 'Upcoming' || a.status === 'Pending' || a.status === 'In Progress') counts.upcoming++;
+    else if (a.status === 'Completed') counts.completed++;
+    else if (a.status === 'Cancelled') counts.cancelled++;
+  }
+  res.json(counts);
+});
+```
+
+---
+
+📤 Online payment receipt upload
+
+The mobile app should upload directly to Supabase Storage (bucket `receipts`) using the user's JWT, then send the returned `path` in the booking payload. No proxy endpoint needed — RLS on the bucket already restricts access.
+
+```ts
+const path = `${user.id}/${Date.now()}.jpg`;
+await supabase.storage.from('receipts').upload(path, file, { contentType: 'image/jpeg' });
+// then POST /api/appointments with receipt_path: path
+```
+
+---
+
+Server skeleton
+
+```js
+// server/index.js
+const express = require('express');
+const cors = require('cors');
+require('dotenv').config();
+
+const app = express();
+app.use(cors({ origin: process.env.ALLOWED_ORIGIN || '*' }));
+app.use(express.json({ limit: '1mb' }));
+
+require('./routes/public')(app);    // locations, specialties, doctors, availability, schedule, prescription
+require('./routes/patient')(app);   // me, stats, appointments CRUD
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ error: 'Internal error' });
+});
+
+app.listen(process.env.PORT || 4000, () => console.log('Proxy up'));
+```
+
+---
+
+Quick reference table
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/locations` | — | Step 1: provinces + cities |
+| GET | `/api/specialties` | — | Step 2: specialties + counts |
+| GET | `/api/doctors` | — | Step 3: doctor cards |
+| GET | `/api/doctors/:id/availability` | — | Step 4: token grid data |
+| GET | `/api/doctors/:id/schedule` | — | Working hours / breaks |
+| POST | `/api/appointments` | ✅ | Step 5: book |
+| GET | `/api/appointments` | ✅ | Appointments tab list |
+| PATCH | `/api/appointments/:id/cancel` | ✅ | Cancel flow |
+| GET | `/api/appointments/:id/prescription` | — | Prescription screen |
+| GET | `/api/me` | ✅ | Profile card |
+| GET | `/api/stats` | ✅ | 4 stat cards |
+
+This contract gives your Expo app exactly what it needs without ever exposing the service role key client-side.

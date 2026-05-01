@@ -20,12 +20,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/contexts/ToastContext";
 import { useColors } from "@/hooks/useColors";
 import { formatDate } from "@/lib/format";
-import {
-  attachDoctorsToAppointments,
-  supabase,
-  type Appointment,
-  type AppointmentStatus,
-} from "@/lib/supabase";
+import { type Appointment, type AppointmentStatus } from "@/lib/supabase";
+import { apiFetch, apiPatch } from "@/lib/api";
 
 const TABS: AppointmentStatus[] = [
   "Upcoming",
@@ -54,16 +50,8 @@ export default function AppointmentsScreen() {
     if (!user?.id) return;
     setError(null);
     try {
-      const { data, error } = await supabase
-        .from("appointments")
-        .select("*")
-        .eq("patient_user_id", user.id)
-        .order("appointment_date", { ascending: false });
-      if (error) throw error;
-      const enriched = await attachDoctorsToAppointments(
-        (data ?? []) as Appointment[],
-      );
-      setAppointments(enriched);
+      const data = await apiFetch<Appointment[]>("/appointments", { auth: true });
+      setAppointments(data);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load appointments");
     } finally {
@@ -93,18 +81,16 @@ export default function AppointmentsScreen() {
 
   const cancel = async (id: string) => {
     setCancellingId(id);
-    const { error } = await supabase
-      .from("appointments")
-      .update({ status: "Cancelled" })
-      .eq("id", id);
-    setCancellingId(null);
-    setConfirmCancelId(null);
-    if (error) {
-      toast.show(error.message, "error");
-      return;
+    try {
+      await apiPatch(`/appointments/${id}/cancel`);
+      toast.show("Appointment cancelled");
+      load();
+    } catch (e: any) {
+      toast.show(e?.message ?? "Failed to cancel", "error");
+    } finally {
+      setCancellingId(null);
+      setConfirmCancelId(null);
     }
-    toast.show("Appointment cancelled");
-    load();
   };
 
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;

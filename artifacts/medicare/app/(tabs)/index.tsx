@@ -21,12 +21,9 @@ import { StatusBadge } from "@/components/StatusBadge";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/contexts/ToastContext";
 import { useColors } from "@/hooks/useColors";
-import { formatDate, formatShortDate, getGreeting } from "@/lib/format";
-import {
-  attachDoctorsToAppointments,
-  supabase,
-  type Appointment,
-} from "@/lib/supabase";
+import { formatShortDate, getGreeting } from "@/lib/format";
+import { type Appointment } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 export default function DashboardScreen() {
   const colors = useColors();
@@ -36,6 +33,7 @@ export default function DashboardScreen() {
   const toast = useToast();
 
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [stats, setStats] = useState({ total: 0, upcoming: 0, completed: 0, cancelled: 0 });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,16 +42,12 @@ export default function DashboardScreen() {
     if (!user?.id) return;
     setError(null);
     try {
-      const { data, error } = await supabase
-        .from("appointments")
-        .select("*")
-        .eq("patient_user_id", user.id)
-        .order("appointment_date", { ascending: false });
-      if (error) throw error;
-      const enriched = await attachDoctorsToAppointments(
-        (data ?? []) as Appointment[],
-      );
-      setAppointments(enriched);
+      const [appts, s] = await Promise.all([
+        apiFetch<Appointment[]>("/appointments", { auth: true }),
+        apiFetch<{ total: number; upcoming: number; completed: number; cancelled: number }>("/stats", { auth: true }),
+      ]);
+      setAppointments(appts);
+      setStats(s);
     } catch (e: any) {
       setError(e?.message ?? "Failed to load dashboard");
     } finally {
@@ -76,12 +70,7 @@ export default function DashboardScreen() {
     toast.show("Signed out");
   };
 
-  const total = appointments.length;
-  const upcoming = appointments.filter(
-    (a) => a.status === "Upcoming" || a.status === "Pending",
-  ).length;
-  const completed = appointments.filter((a) => a.status === "Completed").length;
-  const cancelled = appointments.filter((a) => a.status === "Cancelled").length;
+  const { total, upcoming, completed, cancelled } = stats;
 
   const upcomingList = appointments
     .filter((a) => a.status === "Upcoming" || a.status === "Pending")

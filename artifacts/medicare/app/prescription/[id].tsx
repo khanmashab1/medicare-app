@@ -14,7 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import QRCode from "react-native-qrcode-svg";
 
-import { supabase } from "@/lib/supabase";
+import { apiFetch } from "@/lib/api";
 
 const TEAL = "#10b981";
 const TEAL_DARK = "#059669";
@@ -83,27 +83,22 @@ export default function PrescriptionScreen() {
   const [appt, setAppt] = useState<any>(null);
   const [doctor, setDoctor] = useState<any>(null);
   const [doctorProfile, setDoctorProfile] = useState<any>(null);
+  const [patient, setPatient] = useState<any>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     setError(null);
     setLoading(true);
     try {
-      const { data: apptData, error: apptErr } = await supabase
-        .from("appointments")
-        .select("*")
-        .eq("id", id)
-        .maybeSingle();
-      if (apptErr || !apptData) throw apptErr ?? new Error("Appointment not found");
-
-      const [docRes, profRes] = await Promise.all([
-        supabase.from("doctors").select("*").eq("user_id", apptData.doctor_user_id).maybeSingle(),
-        supabase.from("profiles").select("id, name").eq("id", apptData.doctor_user_id).maybeSingle(),
-      ]);
-
-      setAppt(apptData);
-      setDoctor(docRes.data);
-      setDoctorProfile(profRes.data);
+      const data = await apiFetch<{
+        appointment: any;
+        patient: any;
+        doctor: any;
+      }>(`/appointments/${id}/prescription`);
+      setAppt(data.appointment);
+      setPatient(data.patient);
+      setDoctor(data.doctor);
+      setDoctorProfile({ name: data.doctor?.name });
     } catch (e: any) {
       setError(e?.message ?? "Failed to load prescription");
     } finally {

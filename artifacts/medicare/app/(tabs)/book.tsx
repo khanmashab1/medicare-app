@@ -20,10 +20,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/contexts/ToastContext";
 import { useColors } from "@/hooks/useColors";
 import { formatShortDate, getNext14Days } from "@/lib/format";
-import { CITIES_BY_PROVINCE, PROVINCES } from "@/lib/locations";
 import { DEFAULT_SPECIALTIES, SPECIALTY_ICONS } from "@/lib/specialties";
-import { supabase, type Doctor } from "@/lib/supabase";
-import { apiFetch } from "@/lib/api";
+import { type Doctor } from "@/lib/supabase";
+import { apiFetch, apiPost } from "@/lib/api";
 
 type Step = 0 | 1 | 2 | 3 | 4;
 
@@ -45,6 +44,7 @@ export default function BookScreen() {
   const [step, setStep] = useState<Step>(0);
 
   // Step 0: Location
+  const [locations, setLocations] = useState<{ province: string; cities: string[] }[]>([]);
   const [selectedProvince, setSelectedProvince] = useState<string | null>(null);
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
 
@@ -104,26 +104,30 @@ export default function BookScreen() {
     }, [profile, user]),
   );
 
+  // Load dynamic locations from API
+  useEffect(() => {
+    apiFetch<{ province: string; cities: string[] }[]>("/locations")
+      .then(setLocations)
+      .catch(() => setLocations([]));
+  }, []);
+
   // Load specialty counts for selected location
   useEffect(() => {
-    if (!selectedCity) return;
+    if (!selectedProvince || !selectedCity) return;
     let mounted = true;
     (async () => {
       setLoadingSpecs(true);
       try {
-        const rows = await apiFetch<{ specialty: string | null }[]>(
-          `/doctors?city=${encodeURIComponent(selectedCity)}`,
+        const rows = await apiFetch<{ specialty: string; doctor_count: number }[]>(
+          `/specialties?province=${encodeURIComponent(selectedProvince)}&city=${encodeURIComponent(selectedCity)}`,
         );
         const counts: Record<string, number> = {};
         for (const sp of DEFAULT_SPECIALTIES) counts[sp] = 0;
-        for (const r of rows) {
-          if (r.specialty) counts[r.specialty] = (counts[r.specialty] ?? 0) + 1;
-        }
+        for (const r of rows) counts[r.specialty] = r.doctor_count;
         if (!mounted) return;
         setSpecialtyCounts(counts);
       } catch {
         if (!mounted) return;
-        // fall back: all specialties at 0
         const counts: Record<string, number> = {};
         for (const sp of DEFAULT_SPECIALTIES) counts[sp] = 0;
         setSpecialtyCounts(counts);
@@ -131,27 +135,23 @@ export default function BookScreen() {
       setLoadingSpecs(false);
     })();
     return () => { mounted = false; };
-  }, [selectedCity]);
+  }, [selectedProvince, selectedCity]);
 
   // Load doctors when specialty selected (via API server to bypass RLS)
   useEffect(() => {
-    if (!selectedSpecialty || !selectedCity) return;
+    if (!selectedSpecialty || !selectedCity || !selectedProvince) return;
     let mounted = true;
     (async () => {
       setLoadingDoctors(true);
       try {
-        type ApiDoctor = Doctor & { profile_name: string | null };
+        type ApiDoctor = Doctor & { name: string };
         const rows = await apiFetch<ApiDoctor[]>(
-          `/doctors?specialty=${encodeURIComponent(selectedSpecialty)}&city=${encodeURIComponent(selectedCity)}`,
+          `/doctors?province=${encodeURIComponent(selectedProvince)}&city=${encodeURIComponent(selectedCity)}&specialty=${encodeURIComponent(selectedSpecialty)}`,
         );
         if (!mounted) return;
         const enriched = rows.map((d) => ({
           ...d,
-          profile: {
-            name: d.profile_name ?? null,
-            city: d.city,
-            province: d.province,
-          },
+          profile: { name: d.name ?? null, city: d.city, province: d.province },
         }));
         setDoctors(enriched);
       } catch {
@@ -161,7 +161,7 @@ export default function BookScreen() {
       setLoadingDoctors(false);
     })();
     return () => { mounted = false; };
-  }, [selectedSpecialty, selectedCity]);
+  }, [selectedSpecialty, selectedCity, selectedProvince]);
 
   // Load tokens when doctor + date selected
   useEffect(() => {
@@ -171,20 +171,23 @@ export default function BookScreen() {
       setLoadingTokens(true);
       setSelectedToken(null);
       try {
-        const tokens = await apiFetch<number[]>(
-          `/booked-tokens?doctor_user_id=${encodeURIComponent(selectedDoctor.user_id)}&date=${encodeURIComponent(selectedDate)}`,
+        const avail = await apiFetch<{ max_patients_per_day: number; booked_tokens: number[] }>(
+          `/doctors/${selectedDoctor.user_id}/availability?date=${encodeURIComponent(selectedDate)}`,
         );
         if (!mounted) return;
-        setBookedTokens(Array.isArray(tokens) ? tokens : []);
+        setBookedTokens(avail.booked_tokens ?? []);
+        setDoctorInfo({
+          max_patients_per_day: avail.max_patients_per_day ?? selectedDoctor.max_patients_per_day ?? 30,
+          easypaisa_number: selectedDoctor.easypaisa_number ?? null,
+        });
       } catch {
         if (!mounted) return;
         setBookedTokens([]);
+        setDoctorInfo({
+          max_patients_per_day: selectedDoctor.max_patients_per_day ?? 30,
+          easypaisa_number: selectedDoctor.easypaisa_number ?? null,
+        });
       }
-      // Use doctor info already loaded into selectedDoctor
-      setDoctorInfo({
-        max_patients_per_day: selectedDoctor.max_patients_per_day ?? 20,
-        easypaisa_number: selectedDoctor.easypaisa_number ?? null,
-      });
       setLoadingTokens(false);
     })();
     return () => {
@@ -195,29 +198,26 @@ export default function BookScreen() {
   const submit = async () => {
     if (!user?.id || !selectedDoctor || !selectedToken) return;
     setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 800));
-    const { error } = await supabase.from("appointments").insert({
-      patient_user_id: user.id,
-      doctor_user_id: selectedDoctor.user_id,
-      appointment_date: selectedDate,
-      token_number: selectedToken,
-      department: selectedSpecialty,
-      reason,
-      status: paymentMethod === "Online" ? "Pending" : "Upcoming",
-      payment_method: paymentMethod,
-      payment_status: paymentMethod === "Online" ? "Pending" : "NA",
-      patient_full_name: patientName,
-      patient_email: patientEmail,
-      patient_phone: patientPhone,
-    });
-    setSubmitting(false);
-    if (error) {
-      toast.show(error.message, "error");
-      return;
+    try {
+      await apiPost("/appointments", {
+        doctor_user_id: selectedDoctor.user_id,
+        appointment_date: selectedDate,
+        token_number: selectedToken,
+        department: selectedSpecialty,
+        reason,
+        payment_method: paymentMethod,
+        patient_full_name: patientName,
+        patient_email: patientEmail,
+        patient_phone: patientPhone,
+      });
+      toast.show("Appointment booked successfully!");
+      reset();
+      router.push("/(tabs)/appointments");
+    } catch (e: any) {
+      toast.show(e?.message ?? "Booking failed", "error");
+    } finally {
+      setSubmitting(false);
     }
-    toast.show("Appointment booked successfully!");
-    reset();
-    router.push("/(tabs)/appointments");
   };
 
   const topPad = Platform.OS === "web" ? Math.max(insets.top, 67) : insets.top;
@@ -276,6 +276,7 @@ export default function BookScreen() {
           <Step0Location
             province={selectedProvince}
             city={selectedCity}
+            locations={locations}
             onProvince={(p) => {
               setSelectedProvince(p);
               setSelectedCity(null);
@@ -383,16 +384,19 @@ export default function BookScreen() {
 function Step0Location({
   province,
   city,
+  locations,
   onProvince,
   onCity,
 }: {
   province: string | null;
   city: string | null;
+  locations: { province: string; cities: string[] }[];
   onProvince: (p: string) => void;
   onCity: (c: string) => void;
 }) {
   const colors = useColors();
-  const cities = province ? CITIES_BY_PROVINCE[province] ?? [] : [];
+  const provinces = locations.map((l) => l.province);
+  const cities = province ? (locations.find((l) => l.province === province)?.cities ?? []) : [];
   return (
     <View>
       <Text style={[styles.stepTitle, { color: colors.foreground }]}>
@@ -409,7 +413,7 @@ function Step0Location({
         </Text>
       </View>
       <View style={styles.locGrid}>
-        {PROVINCES.map((p) => {
+        {provinces.map((p) => {
           const isSel = province === p;
           return (
             <Pressable
